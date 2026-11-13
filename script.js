@@ -5,7 +5,7 @@
 
 // ---- Backend address ----
 // After deploying the backend on Render, paste its URL below (no trailing slash).
-const RENDER_BACKEND_URL = "https://booknest-api.onrender.com";
+const RENDER_BACKEND_URL = "https://booknest-api-d348.onrender.com";
 
 const IS_LOCAL = ["localhost", "127.0.0.1", ""].includes(window.location.hostname);
 const API_URL = IS_LOCAL ? "http://127.0.0.1:8000" : RENDER_BACKEND_URL;
