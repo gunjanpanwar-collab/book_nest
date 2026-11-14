@@ -92,6 +92,7 @@ document.addEventListener("DOMContentLoaded", function () {
     if (addBookBtn && bookDialog && bookForm) {
         addBookBtn.addEventListener("click", function () {
             bookForm.reset();
+            clearLookup();
             bookDialog.showModal();
         });
     }
@@ -116,6 +117,190 @@ document.addEventListener("DOMContentLoaded", function () {
         setText("booksRead", count("Read"));
         setText("currentlyReading", count("Currently Reading"));
         setText("wantToRead", count("Want to Read"));
+    }
+
+    // ======================================
+    // 4b. BOOK COVERS AND BOOK SEARCH (via the backend)
+    // ======================================
+
+    function createPlaceholderCover() {
+        const placeholder = document.createElement("div");
+        placeholder.className = "book-cover-placeholder";
+        placeholder.textContent = "✧";
+        return placeholder;
+    }
+
+    // Real cover if we have one, otherwise the beige placeholder
+    function createCoverElement(book) {
+        if (!book.cover) return createPlaceholderCover();
+
+        const image = document.createElement("img");
+        image.className = "book-cover-img";
+        image.src = book.cover;
+        image.alt = book.title + " cover";
+        image.loading = "lazy";
+        image.addEventListener("error", function () {
+            image.replaceWith(createPlaceholderCover());
+        });
+        return image;
+    }
+
+    // Ask the backend to search for books (Google Books / Open Library)
+    async function searchBooks(query, signal) {
+        const response = await fetch(
+            API_URL + "/books/search?q=" + encodeURIComponent(query),
+            { signal: signal }
+        );
+        if (!response.ok) throw new Error("Search failed");
+        const data = await response.json();
+        return Array.isArray(data.results) ? data.results : [];
+    }
+
+    const bookLookup = document.getElementById("bookLookup");
+    const lookupResults = document.getElementById("bookLookupResults");
+    const lookupHint = document.getElementById("bookLookupHint");
+    const DEFAULT_LOOKUP_HINT =
+        "Pick a result to fill in the details and cover automatically, or type them below.";
+
+    let selectedCover = "";
+    let lookupTimer = null;
+    let lookupController = null;
+
+    function clearLookup() {
+        selectedCover = "";
+        clearTimeout(lookupTimer);
+        if (lookupController) lookupController.abort();
+        if (bookLookup) bookLookup.value = "";
+        if (lookupResults) lookupResults.innerHTML = "";
+        if (lookupHint) lookupHint.textContent = DEFAULT_LOOKUP_HINT;
+    }
+
+    function showLookupMessage(text) {
+        if (!lookupResults) return;
+        lookupResults.innerHTML = "";
+        const item = document.createElement("li");
+        item.className = "lookup-message";
+        item.textContent = text;
+        lookupResults.appendChild(item);
+    }
+
+    function chooseLookupResult(result) {
+        document.getElementById("bookTitle").value = result.title;
+        document.getElementById("bookAuthor").value = result.author;
+
+        // Only use the genre if it exists in your dropdown
+        if (result.genre && getAllowedGenres().includes(result.genre)) {
+            document.getElementById("bookGenre").value = result.genre;
+        }
+
+        selectedCover = result.cover || "";
+        lookupResults.innerHTML = "";
+        lookupHint.textContent = result.genre
+            ? "Filled in from \"" + result.title + "\". Check the genre and status, then save."
+            : "Filled in from \"" + result.title + "\". Please choose a genre, then save.";
+    }
+
+    function renderLookupResults(results) {
+        lookupResults.innerHTML = "";
+
+        if (results.length === 0) {
+            showLookupMessage("No books found. You can enter the details yourself below.");
+            return;
+        }
+
+        results.forEach(function (result) {
+            const item = document.createElement("li");
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = "lookup-item";
+
+            let thumb;
+            if (result.cover) {
+                thumb = document.createElement("img");
+                thumb.className = "lookup-thumb";
+                thumb.src = result.cover;
+                thumb.alt = "";
+                thumb.addEventListener("error", function () {
+                    const empty = document.createElement("div");
+                    empty.className = "lookup-thumb-empty";
+                    empty.textContent = "✧";
+                    thumb.replaceWith(empty);
+                });
+            } else {
+                thumb = document.createElement("div");
+                thumb.className = "lookup-thumb-empty";
+                thumb.textContent = "✧";
+            }
+
+            const text = document.createElement("div");
+            text.className = "lookup-text";
+            const title = document.createElement("strong");
+            title.textContent = result.title;
+            const author = document.createElement("span");
+            author.textContent =
+                result.author + (result.year ? " · " + result.year : "");
+            text.append(title, author);
+
+            button.append(thumb, text);
+            button.addEventListener("click", () => chooseLookupResult(result));
+            item.appendChild(button);
+            lookupResults.appendChild(item);
+        });
+    }
+
+    async function runLookup(query) {
+        if (lookupController) lookupController.abort();
+        lookupController = new AbortController();
+        const controller = lookupController;
+        const timeout = setTimeout(() => controller.abort(), 60000);
+
+        showLookupMessage("Searching...");
+
+        try {
+            const results = await searchBooks(query, controller.signal);
+            renderLookupResults(results);
+        } catch (error) {
+            if (error.name === "AbortError" && lookupController !== controller) {
+                return; // replaced by a newer search
+            }
+            showLookupMessage(
+                "Search isn't available right now. You can still enter the details yourself."
+            );
+        } finally {
+            clearTimeout(timeout);
+        }
+    }
+
+    if (bookLookup && lookupResults && lookupHint) {
+        bookLookup.addEventListener("input", function () {
+            clearTimeout(lookupTimer);
+            const query = bookLookup.value.trim();
+
+            if (query.length < 2) {
+                lookupResults.innerHTML = "";
+                return;
+            }
+            // wait until the person pauses typing
+            lookupTimer = setTimeout(() => runLookup(query), 400);
+        });
+    }
+
+    // One-time: find covers for books that don't have one yet
+    async function backfillCovers() {
+        const pending = books.filter(book => !book.cover && !book.coverTried);
+
+        for (const book of pending) {
+            try {
+                const results = await searchBooks(book.title + " " + book.author);
+                const match = results.find(result => result.cover);
+                if (match) book.cover = match.cover;
+                book.coverTried = true;
+                saveBooks();
+                displayBooks();
+            } catch (error) {
+                return; // backend unreachable: try again on the next visit
+            }
+        }
     }
 
     // ======================================
@@ -167,9 +352,7 @@ document.addEventListener("DOMContentLoaded", function () {
             const card = document.createElement("article");
             card.className = "book-card";
 
-            const cover = document.createElement("div");
-            cover.className = "book-cover-placeholder";
-            cover.textContent = "✧";
+            const cover = createCoverElement(book);
 
             const title = document.createElement("h3");
             title.textContent = book.title;
@@ -230,7 +413,8 @@ document.addEventListener("DOMContentLoaded", function () {
                 title: document.getElementById("bookTitle").value.trim(),
                 author: document.getElementById("bookAuthor").value.trim(),
                 genre: document.getElementById("bookGenre").value,
-                status: document.getElementById("bookStatus").value
+                status: document.getElementById("bookStatus").value,
+                cover: selectedCover
             };
 
             if (!newBook.title || !newBook.author || !newBook.genre) {
@@ -241,6 +425,7 @@ document.addEventListener("DOMContentLoaded", function () {
             books.push(newBook);
             saveBooks();
             bookForm.reset();
+            clearLookup();
             bookDialog.close();
 
             // Jump to the shelf where the new book lives
@@ -550,6 +735,7 @@ document.addEventListener("DOMContentLoaded", function () {
     saveBooks();
     updateRatingVisibility();
     refreshDashboard();
+    backfillCovers();
 
     // ======================================
     // 11. AI COMPANION (talks to the Python backend)
