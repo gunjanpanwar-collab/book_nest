@@ -563,6 +563,11 @@ document.addEventListener("DOMContentLoaded", function () {
 
         const chatHistory = []; // remembers the conversation: {role, text}
 
+        // Wake up the free Render backend as soon as the page opens,
+        // so it is ready by the time someone sends a message.
+        console.log("BookNest AI backend:", API_URL);
+        fetch(API_URL + "/health").catch(function () {});
+
         function addMessage(message, sender) {
             const wrapper = document.createElement("div");
 
@@ -643,15 +648,16 @@ document.addEventListener("DOMContentLoaded", function () {
                 loading.remove();
                 console.error("BookNest AI Error:", error);
 
-                const isNetworkProblem =
-                    error.name === "AbortError" || error instanceof TypeError;
+                let friendly;
+                if (error.name === "AbortError") {
+                    friendly = "The AI service took too long to answer. It may still be waking up, so please try again in a minute. ♡";
+                } else if (error instanceof TypeError) {
+                    friendly = "I couldn't connect to the AI service. Please check your internet and try again. ♡";
+                } else {
+                    friendly = error.message;
+                }
 
-                addMessage(
-                    isNetworkProblem
-                        ? "I couldn't reach my AI service. It may be waking up, so please try again in a minute. ♡"
-                        : error.message,
-                    "ai"
-                );
+                addMessage(friendly, "ai");
             } finally {
                 clearTimeout(timeout);
                 sendButton.disabled = false;

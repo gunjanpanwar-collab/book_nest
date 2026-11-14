@@ -28,9 +28,16 @@ SYSTEM_PROMPT = (
     "Be warm, concise, and avoid spoilers unless the reader asks for them."
 )
 
-client = genai.Client(api_key=API_KEY) if API_KEY else None
+# 30-second limit (value is in milliseconds) so a stuck AI call returns a clear
+# error instead of hanging forever.
+client = (
+    genai.Client(api_key=API_KEY, http_options=types.HttpOptions(timeout=30000))
+    if API_KEY
+    else None
+)
 
 app = FastAPI(title="BookNest API")
+print(f"BookNest API starting. Model: {MODEL}. Key set: {bool(API_KEY)}")
 
 app.add_middleware(
     CORSMiddleware,
