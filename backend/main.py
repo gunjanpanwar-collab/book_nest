@@ -15,11 +15,17 @@ load_dotenv()
 API_KEY = os.getenv("GEMINI_API_KEY")
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
-# Extra allowed frontends, comma separated, e.g. https://booknest.onrender.com
+
+# Extra allowed frontends, comma separated, e.g. https://booknest-xxxx.onrender.com
+def clean_origin(value: str) -> str:
+    """Tolerate stray spaces, quotes and a trailing slash in the setting."""
+    return value.strip().strip('"').strip("'").strip().rstrip("/")
+
+
 EXTRA_ORIGINS = [
-    o.strip().rstrip("/")
+    clean_origin(o)
     for o in os.getenv("ALLOWED_ORIGINS", "").split(",")
-    if o.strip()
+    if clean_origin(o)
 ]
 
 SYSTEM_PROMPT = (
@@ -37,7 +43,10 @@ client = (
 )
 
 app = FastAPI(title="BookNest API")
-print(f"BookNest API starting. Model: {MODEL}. Key set: {bool(API_KEY)}")
+print(
+    f"BookNest API starting. Model: {MODEL}. Key set: {bool(API_KEY)}. "
+    f"Allowed origins: {EXTRA_ORIGINS}"
+)
 
 app.add_middleware(
     CORSMiddleware,
